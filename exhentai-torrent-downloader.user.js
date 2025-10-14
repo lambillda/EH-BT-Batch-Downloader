@@ -1,11 +1,11 @@
 // ==UserScript==
 // @name         ExHentai Torrent Batch Downloader
 // @namespace    http://lambillda.null/
-// @version      1.0
+// @version      1.1
 // @description  批量下载ExHentai的BT种子
 // @author       Lambillda
-// @match        *://exhentai.org/favorites.php
-// @match        *://e-hentai.org/favorites.php
+// @match        *://exhentai.org/favorites.php*
+// @match        *://e-hentai.org/favorites.php*
 // @grant        GM_xmlhttpRequest
 // @connect      exhentai.org
 // @connect      e-hentai.org
