@@ -1,12 +1,15 @@
 // ==UserScript==
 // @name         ExHentai Torrent Batch Downloader
 // @namespace    http://lambillda.null/
-// @version      1.1
+// @version      1.3
 // @description  批量下载ExHentai的BT种子
 // @author       Lambillda
 // @match        *://exhentai.org/favorites.php*
 // @match        *://e-hentai.org/favorites.php*
 // @grant        GM_xmlhttpRequest
+// @grant        GM_getValue
+// @grant        GM_setValue
+// @grant        GM_registerMenuCommand
 // @connect      exhentai.org
 // @connect      e-hentai.org
 // @connect      *
@@ -14,6 +17,23 @@
 
 (function() {
     'use strict';
+
+    // 配置项
+    let config = {
+        silentMode: GM_getValue('silentMode', false) // 静默模式：使用通知而不是弹窗
+    };
+
+    // 注册菜单命令
+    GM_registerMenuCommand('切换静默模式 (当前: ' + (config.silentMode ? '开启' : '关闭') + ')', function() {
+        config.silentMode = !config.silentMode;
+        GM_setValue('silentMode', config.silentMode);
+        alert('静默模式已' + (config.silentMode ? '开启' : '关闭') + '\n开启后错误将以通知形式显示，不会中断下载流程');
+        location.reload();
+    });
+
+    // 范围选择状态
+    let rangeSelectMode = false;
+    let rangeStart = null;
 
     // 样式
     const styles = `
@@ -48,7 +68,7 @@
         .torrent-select-all {
             position: fixed;
             top: 10px;
-            right: 90px;
+            right: 170px;
             z-index: 9999;
             padding: 10px 15px;
             background-color: #34353b;
@@ -60,6 +80,26 @@
         }
         .torrent-select-all:hover {
             background-color: #5c0d12;
+        }
+        .torrent-range-select {
+            position: fixed;
+            top: 10px;
+            right: 90px;
+            z-index: 9999;
+            padding: 10px 15px;
+            background-color: #34353b;
+            color: #f1f1f1;
+            border: 1px solid #5c0d12;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        .torrent-range-select:hover {
+            background-color: #5c0d12;
+        }
+        .torrent-range-select.active {
+            background-color: #5c0d12;
+            border-color: #ff6b6b;
         }
         .torrent-status {
             position: fixed;
@@ -75,6 +115,40 @@
             max-width: 300px;
             display: none;
         }
+        .torrent-notification {
+            position: fixed;
+            top: 100px;
+            right: 10px;
+            z-index: 10000;
+            padding: 15px;
+            background-color: #34353b;
+            color: #f1f1f1;
+            border: 1px solid #5c0d12;
+            border-radius: 3px;
+            font-size: 13px;
+            max-width: 350px;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.3);
+            animation: slideIn 0.3s ease-out;
+            transition: opacity 0.3s ease-out, transform 0.3s ease-out;
+        }
+        .torrent-notification.error {
+            border-color: #ff6b6b;
+            background-color: #4a2b2b;
+        }
+        .torrent-notification.success {
+            border-color: #51cf66;
+            background-color: #2b4a2b;
+        }
+        @keyframes slideIn {
+            from {
+                transform: translateX(400px);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
     `;
 
     // 添加样式
@@ -89,6 +163,22 @@
             console.log(`等待 ${(delay / 1000).toFixed(2)} 秒...`);
             setTimeout(resolve, delay);
         });
+    }
+
+    // 显示通知
+    function showNotification(message, type = 'info', duration = 3000) {
+        const notification = document.createElement('div');
+        notification.className = 'torrent-notification ' + type;
+        notification.textContent = message;
+        document.body.appendChild(notification);
+
+        setTimeout(() => {
+            notification.style.opacity = '0';
+            notification.style.transform = 'translateX(400px)';
+            setTimeout(() => {
+                document.body.removeChild(notification);
+            }, 300);
+        }, duration);
     }
 
     // 更新状态显示
@@ -155,18 +245,38 @@
                 return;
             }
 
+            // 查找该条目的torrent链接（在同一行/容器中）
+            let torrentUrl = null;
+            let parent = link.parentElement;
+
+            // 向上查找包含torrent链接的父容器
+            for (let i = 0; i < 5 && parent; i++) {
+                const torrentLink = parent.querySelector('a[href*="gallerytorrents.php"]');
+                if (torrentLink) {
+                    torrentUrl = torrentLink.href;
+                    console.log('找到torrent链接:', torrentUrl);
+                    break;
+                }
+                parent = parent.parentElement;
+            }
+
             // 创建复选框
             const checkbox = document.createElement('input');
             checkbox.type = 'checkbox';
             checkbox.className = 'torrent-checkbox';
             checkbox.dataset.galleryUrl = link.href;
 
+            // 如果找到了torrent链接，直接存储
+            if (torrentUrl) {
+                checkbox.dataset.torrentUrl = torrentUrl;
+            }
+
             // 创建水平容器 (flex布局)
             const wrapper = document.createElement('div');
             wrapper.className = 'torrent-item-wrapper';
 
             // 将链接从原位置移动到wrapper中
-            const parent = link.parentNode;
+            const originalParent = link.parentNode;
             const nextSibling = link.nextSibling;
 
             // 先添加复选框，再添加链接（这样复选框在左，链接在右）
@@ -175,9 +285,9 @@
 
             // 将wrapper插入到原链接的位置
             if (nextSibling) {
-                parent.insertBefore(wrapper, nextSibling);
+                originalParent.insertBefore(wrapper, nextSibling);
             } else {
-                parent.appendChild(wrapper);
+                originalParent.appendChild(wrapper);
             }
 
             // 标记已处理
@@ -209,6 +319,14 @@
         selectAllBtn.addEventListener('click', toggleSelectAll);
         document.body.appendChild(selectAllBtn);
 
+        // 范围选择按钮
+        const rangeSelectBtn = document.createElement('button');
+        rangeSelectBtn.id = 'torrent-range-select-btn';
+        rangeSelectBtn.className = 'torrent-range-select';
+        rangeSelectBtn.textContent = '范围选择';
+        rangeSelectBtn.addEventListener('click', toggleRangeSelect);
+        document.body.appendChild(rangeSelectBtn);
+
         // 下载按钮
         const downloadBtn = document.createElement('button');
         downloadBtn.id = 'torrent-download-btn';
@@ -237,41 +355,80 @@
         btn.textContent = allChecked ? '全选' : '取消全选';
     }
 
-    // 从gallery页面获取torrent页面URL
-    async function getTorrentPageUrl(galleryUrl) {
-        return new Promise((resolve, reject) => {
-            GM_xmlhttpRequest({
-                method: 'GET',
-                url: galleryUrl,
-                onload: function(response) {
-                    try {
-                        const parser = new DOMParser();
-                        const doc = parser.parseFromString(response.responseText, 'text/html');
+    // 切换范围选择模式
+    function toggleRangeSelect() {
+        rangeSelectMode = !rangeSelectMode;
+        rangeStart = null;
 
-                        // 查找Torrent Download链接
-                        const torrentLink = doc.querySelector('a[onclick*="gallerytorrents.php"]');
+        const btn = document.getElementById('torrent-range-select-btn');
+        if (rangeSelectMode) {
+            btn.classList.add('active');
+            btn.textContent = '取消范围';
+            showNotification('范围选择模式：点击第一个复选框设置起点，再点击第二个复选框设置终点', 'success', 4000);
 
-                        if (torrentLink) {
-                            const onclickAttr = torrentLink.getAttribute('onclick');
-                            const urlMatch = onclickAttr.match(/https:\/\/exhentai\.org\/gallerytorrents\.php\?[^']+/);
-
-                            if (urlMatch) {
-                                resolve(urlMatch[0]);
-                            } else {
-                                reject('无法解析torrent页面URL');
-                            }
-                        } else {
-                            reject('该条目没有torrent下载选项');
-                        }
-                    } catch (error) {
-                        reject('解析页面失败: ' + error.message);
-                    }
-                },
-                onerror: function(error) {
-                    reject('请求失败: ' + error);
-                }
+            // 为所有复选框添加范围选择事件
+            const checkboxes = document.querySelectorAll('.torrent-checkbox');
+            checkboxes.forEach(cb => {
+                cb.addEventListener('click', handleRangeClick);
             });
-        });
+        } else {
+            btn.classList.remove('active');
+            btn.textContent = '范围选择';
+            showNotification('已退出范围选择模式', 'info', 2000);
+
+            // 移除范围选择事件
+            const checkboxes = document.querySelectorAll('.torrent-checkbox');
+            checkboxes.forEach(cb => {
+                cb.removeEventListener('click', handleRangeClick);
+            });
+        }
+    }
+
+    // 处理范围点击
+    function handleRangeClick(event) {
+        if (!rangeSelectMode) return;
+
+        event.preventDefault();
+        event.stopPropagation();
+
+        const checkbox = event.target;
+        const allCheckboxes = Array.from(document.querySelectorAll('.torrent-checkbox'));
+        const clickedIndex = allCheckboxes.indexOf(checkbox);
+
+        if (rangeStart === null) {
+            // 设置起点
+            rangeStart = clickedIndex;
+            checkbox.checked = true;
+            showNotification('起点已设置，请点击终点复选框', 'success', 2000);
+        } else {
+            // 设置终点并选择范围
+            const rangeEnd = clickedIndex;
+            const start = Math.min(rangeStart, rangeEnd);
+            const end = Math.max(rangeStart, rangeEnd);
+
+            // 明确包含起点和终点 [a, b]
+            for (let i = start; i <= end; i++) {
+                if (allCheckboxes[i]) {
+                    allCheckboxes[i].checked = true;
+                }
+            }
+
+            // 再次确保起点和终点都被选中
+            allCheckboxes[start].checked = true;
+            allCheckboxes[end].checked = true;
+
+            showNotification(`已选择 ${end - start + 1} 个项目`, 'success', 2000);
+
+            // 重置范围选择
+            rangeStart = null;
+
+            // 自动退出范围选择模式
+            setTimeout(() => {
+                if (rangeSelectMode) {
+                    toggleRangeSelect();
+                }
+            }, 500);
+        }
     }
 
     // 获取torrent列表
@@ -429,21 +586,33 @@
     }
 
     // 处理单个gallery的下载
-    async function processGallery(galleryUrl, index, total) {
+    async function processGallery(galleryUrl, torrentPageUrl, index, total) {
         updateStatus(`[${index}/${total}] 正在处理...`);
 
         try {
-            // 获取torrent页面URL
-            const torrentPageUrl = await getTorrentPageUrl(galleryUrl);
-            await randomDelay();
+            if (!torrentPageUrl) {
+                const errorMsg = `该条目没有torrent下载选项`;
+                if (config.silentMode) {
+                    showNotification(`[${index}/${total}] ${errorMsg}`, 'error', 2000);
+                    console.warn(errorMsg, galleryUrl);
+                } else {
+                    alert(`${errorMsg}:\n${galleryUrl}`);
+                }
+                return;
+            }
 
             // 获取torrent列表
             const torrents = await getTorrentList(torrentPageUrl);
-
             console.log('找到的torrents:', torrents);
 
             if (torrents.length === 0) {
-                alert(`该条目没有可用的torrent:\n${galleryUrl}`);
+                const errorMsg = `该条目没有可用的torrent`;
+                if (config.silentMode) {
+                    showNotification(`[${index}/${total}] ${errorMsg}`, 'error', 2000);
+                    console.warn(errorMsg, galleryUrl);
+                } else {
+                    alert(`${errorMsg}:\n${galleryUrl}`);
+                }
                 return;
             }
 
@@ -453,7 +622,7 @@
                 // 只有一个torrent，直接下载
                 selectedTorrent = torrents[0];
             } else {
-                // 多个torrent，让用户选择
+                // 多个torrent，让用户选择（始终弹窗）
                 const options = torrents.map((t, idx) => {
                     let info = `${idx + 1}. ${t.name}\n`;
                     info += `   Seeds: ${t.seeds} | Peers: ${t.peers}`;
@@ -475,7 +644,11 @@
 
                 const choiceNum = parseInt(choice);
                 if (isNaN(choiceNum) || choiceNum < 1 || choiceNum > torrents.length) {
-                    alert('无效的选择');
+                    if (config.silentMode) {
+                        showNotification('无效的选择', 'error', 2000);
+                    } else {
+                        alert('无效的选择');
+                    }
                     return;
                 }
 
@@ -487,12 +660,20 @@
                 updateStatus(`[${index}/${total}] 正在下载: ${selectedTorrent.name}`);
                 await downloadTorrent(selectedTorrent.url, selectedTorrent.name);
                 updateStatus(`[${index}/${total}] 下载完成`);
+                if (config.silentMode) {
+                    showNotification(`[${index}/${total}] 下载完成`, 'success', 1500);
+                }
             }
 
         } catch (error) {
             console.error('处理失败:', error);
             const errorMsg = typeof error === 'object' ? JSON.stringify(error) : String(error);
-            alert(`处理失败:\n${galleryUrl}\n\n错误: ${errorMsg}`);
+            if (config.silentMode) {
+                showNotification(`[${index}/${total}] 处理失败: ${errorMsg}`, 'error', 3000);
+                console.error('处理失败:', galleryUrl, error);
+            } else {
+                alert(`处理失败:\n${galleryUrl}\n\n错误: ${errorMsg}`);
+            }
         }
     }
 
@@ -501,7 +682,11 @@
         const checkedBoxes = Array.from(document.querySelectorAll('.torrent-checkbox:checked'));
 
         if (checkedBoxes.length === 0) {
-            alert('请至少选择一个条目');
+            if (config.silentMode) {
+                showNotification('请至少选择一个条目', 'error', 2000);
+            } else {
+                alert('请至少选择一个条目');
+            }
             return;
         }
 
@@ -518,8 +703,9 @@
         for (let i = 0; i < checkedBoxes.length; i++) {
             const checkbox = checkedBoxes[i];
             const galleryUrl = checkbox.dataset.galleryUrl;
+            const torrentUrl = checkbox.dataset.torrentUrl;
 
-            await processGallery(galleryUrl, i + 1, checkedBoxes.length);
+            await processGallery(galleryUrl, torrentUrl, i + 1, checkedBoxes.length);
 
             // 在处理下一个之前延迟
             if (i < checkedBoxes.length - 1) {
@@ -532,7 +718,11 @@
         downloadBtn.textContent = '下载';
         hideStatus();
 
-        alert('批量下载任务完成！');
+        if (config.silentMode) {
+            showNotification('批量下载任务完成！', 'success', 3000);
+        } else {
+            alert('批量下载任务完成！');
+        }
     }
 
     // 初始化
