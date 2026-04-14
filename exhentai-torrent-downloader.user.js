@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ExHentai Torrent Batch Downloader
 // @namespace    http://lambillda.null/
-// @version      1.3.1
+// @version      1.3.2
 // @description  批量下载ExHentai的BT种子
 // @author       Lambillda
 // @match        *://exhentai.org/favorites.php*
@@ -243,20 +243,17 @@
         return;
       }
 
-      // 查找该条目的torrent链接（在同一行/容器中）
+      // 从 gallery URL 直接构建 torrent 页面 URL，避免向上搜索 DOM
+      // 时错误地拿到其他画廊的链接
       let torrentUrl = null;
-      let parent = link.parentElement;
-
-      // 向上查找包含torrent链接的父容器
-      for (let i = 0; i < 5 && parent; i++) {
-        const torrentLink = parent.querySelector(
-          'a[href*="gallerytorrents.php"]',
-        );
-        if (torrentLink) {
-          torrentUrl = torrentLink.href;
-          break;
-        }
-        parent = parent.parentElement;
+      const galleryMatch = link.href.match(/\/g\/(\d+)\/([a-f0-9]+)/i);
+      if (galleryMatch) {
+        const gid = galleryMatch[1];
+        const token = galleryMatch[2];
+        const baseUrl = link.href.includes("exhentai.org")
+          ? "https://exhentai.org"
+          : "https://e-hentai.org";
+        torrentUrl = `${baseUrl}/gallerytorrents.php?gid=${gid}&t=${token}`;
       }
 
       // 创建复选框
