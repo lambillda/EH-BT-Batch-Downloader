@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ExHentai Torrent Batch Downloader
 // @namespace    http://lambillda.null/
-// @version      1.3.2
+// @version      1.3.3
 // @description  批量下载ExHentai的BT种子
 // @author       Lambillda
 // @match        *://exhentai.org/favorites.php*
@@ -20,7 +20,7 @@
 
   // 配置项
   let config = {
-    silentMode: GM_getValue("silentMode", false), // 静默模式：使用通知而不是弹窗
+    silentMode: GM_getValue("silentMode", false), // 静默模式：跳过无torrent的画廊，错误以通知代替弹窗
   };
 
   // 注册菜单命令
@@ -32,7 +32,7 @@
       alert(
         "静默模式已" +
           (config.silentMode ? "开启" : "关闭") +
-          "\n开启后错误将以通知形式显示，不会中断下载流程",
+          "\n开启后没有torrent的画廊将被静默跳过，其他错误以通知形式显示",
       );
       location.reload();
     },
@@ -606,11 +606,8 @@
 
     try {
       if (!torrentPageUrl) {
-        const errorMsg = `该条目没有torrent下载选项`;
-        if (config.silentMode) {
-          showNotification(`[${index}/${total}] ${errorMsg}`, "error", 2000);
-        } else {
-          alert(`${errorMsg}:\n${galleryUrl}`);
+        if (!config.silentMode) {
+          alert(`该条目没有torrent下载选项:\n${galleryUrl}`);
         }
         return;
       }
@@ -619,11 +616,8 @@
       const torrents = await getTorrentList(torrentPageUrl);
 
       if (torrents.length === 0) {
-        const errorMsg = `该条目没有可用的torrent`;
-        if (config.silentMode) {
-          showNotification(`[${index}/${total}] ${errorMsg}`, "error", 2000);
-        } else {
-          alert(`${errorMsg}:\n${galleryUrl}`);
+        if (!config.silentMode) {
+          alert(`该条目没有可用的torrent:\n${galleryUrl}`);
         }
         return;
       }
