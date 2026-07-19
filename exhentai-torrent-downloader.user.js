@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ExHentai Torrent Batch Downloader
 // @namespace    http://lambillda.null/
-// @version      1.3.3
+// @version      1.3.4
 // @description  批量下载ExHentai的BT种子
 // @author       Lambillda
 // @match        *://exhentai.org/favorites.php*
@@ -18,12 +18,10 @@
 (function () {
   "use strict";
 
-  // 配置项
   let config = {
-    silentMode: GM_getValue("silentMode", false), // 静默模式：跳过无torrent的画廊，错误以通知代替弹窗
+    silentMode: GM_getValue("silentMode", false),
   };
 
-  // 注册菜单命令
   GM_registerMenuCommand(
     "切换静默模式 (当前: " + (config.silentMode ? "开启" : "关闭") + ")",
     function () {
@@ -38,11 +36,9 @@
     },
   );
 
-  // 范围选择状态
   let rangeSelectMode = false;
   let rangeStart = null;
 
-  // 样式
   const styles = `
         .torrent-item-wrapper {
             display: inline-flex;
@@ -155,12 +151,10 @@
         }
     `;
 
-  // 添加样式
   const styleSheet = document.createElement("style");
   styleSheet.textContent = styles;
   document.head.appendChild(styleSheet);
 
-  // 随机延迟函数 (2-4秒)
   function randomDelay() {
     return new Promise((resolve) => {
       const delay = Math.random() * 2000 + 2000;
@@ -168,7 +162,6 @@
     });
   }
 
-  // 显示通知
   function showNotification(message, type = "info", duration = 3000) {
     const notification = document.createElement("div");
     notification.className = "torrent-notification " + type;
@@ -184,7 +177,6 @@
     }, duration);
   }
 
-  // 更新状态显示
   function updateStatus(message) {
     const statusDiv = document.getElementById("torrent-status");
     if (statusDiv) {
@@ -193,7 +185,6 @@
     }
   }
 
-  // 隐藏状态显示
   function hideStatus() {
     const statusDiv = document.getElementById("torrent-status");
     if (statusDiv) {
@@ -201,50 +192,33 @@
     }
   }
 
-  // 添加复选框到每个条目
-  function addCheckboxes() {
-    // 尝试多种选择器
-    let galleryLinks = [];
+  const galleryLinkSelector = 'a[href*="/g/"]';
 
-    // 尝试1: 带class的链接
-    galleryLinks = document.querySelectorAll('a.link-instanted[href*="/g/"]');
+  function findGalleryLinks(root) {
+    const links = [];
 
-    // 尝试2: 所有gallery链接
-    if (galleryLinks.length === 0) {
-      galleryLinks = document.querySelectorAll(
-        'a[href*="/g/"][href*="exhentai.org"]',
-      );
+    if (root.nodeType === 1 && root.matches(galleryLinkSelector)) {
+      links.push(root);
     }
 
-    // 尝试3: 任何包含/g/的链接
-    if (galleryLinks.length === 0) {
-      galleryLinks = document.querySelectorAll('a[href*="/g/"]');
-
-      // 过滤掉非gallery链接
-      galleryLinks = Array.from(galleryLinks).filter((link) => {
-        const href = link.href;
-        return /\/g\/\d+\/[a-f0-9]+\/?/.test(href);
-      });
+    if (root.querySelectorAll) {
+      links.push(...root.querySelectorAll(galleryLinkSelector));
     }
 
-    // 尝试4: 通过glink类查找
-    if (galleryLinks.length === 0) {
-      const glinks = document.querySelectorAll(".glink");
+    return links.filter((link) =>
+      /\/g\/\d+\/[a-f0-9]+\/?/i.test(link.href),
+    );
+  }
 
-      galleryLinks = Array.from(glinks)
-        .map((glink) => glink.closest("a"))
-        .filter((a) => a);
-    }
+  function addCheckboxes(root = document) {
+    const galleryLinks = findGalleryLinks(root);
 
     let addedCount = 0;
     galleryLinks.forEach((link) => {
-      // 检查链接本身是否已经处理过
       if (link.hasAttribute("data-torrent-checkbox-added")) {
         return;
       }
 
-      // 从 gallery URL 直接构建 torrent 页面 URL，避免向上搜索 DOM
-      // 时错误地拿到其他画廊的链接
       let torrentUrl = null;
       const galleryMatch = link.href.match(/\/g\/(\d+)\/([a-f0-9]+)/i);
       if (galleryMatch) {
@@ -256,91 +230,71 @@
         torrentUrl = `${baseUrl}/gallerytorrents.php?gid=${gid}&t=${token}`;
       }
 
-      // 创建复选框
       const checkbox = document.createElement("input");
       checkbox.type = "checkbox";
       checkbox.className = "torrent-checkbox";
       checkbox.dataset.galleryUrl = link.href;
 
-      // 如果找到了torrent链接，直接存储
       if (torrentUrl) {
         checkbox.dataset.torrentUrl = torrentUrl;
       }
 
-      // 创建水平容器 (flex布局)
+      if (rangeSelectMode) {
+        checkbox.addEventListener("click", handleRangeClick);
+      }
+
       const wrapper = document.createElement("div");
       wrapper.className = "torrent-item-wrapper";
 
-      // 将链接从原位置移动到wrapper中
-      const originalParent = link.parentNode;
-      const nextSibling = link.nextSibling;
-
-      // 先添加复选框，再添加链接（这样复选框在左，链接在右）
-      wrapper.appendChild(checkbox);
-      wrapper.appendChild(link);
-
-      // 将wrapper插入到原链接的位置
-      if (nextSibling) {
-        originalParent.insertBefore(wrapper, nextSibling);
-      } else {
-        originalParent.appendChild(wrapper);
-      }
-
-      // 标记已处理
       link.setAttribute("data-torrent-checkbox-added", "true");
+
+      link.replaceWith(wrapper);
+      wrapper.append(checkbox, link);
       addedCount++;
     });
+
+    return addedCount;
   }
 
-  // 添加控制按钮
   function addControlButtons() {
-    // 检查容器是否已存在
     if (document.getElementById("torrent-control-container")) {
       return;
     }
 
-    // 创建容器
     const container = document.createElement("div");
     container.id = "torrent-control-container";
     container.className = "torrent-control-container";
 
-    // 全选/取消全选按钮
     const selectAllBtn = document.createElement("button");
     selectAllBtn.id = "torrent-select-all-btn";
     selectAllBtn.className = "torrent-select-all";
     selectAllBtn.textContent = "全选";
     selectAllBtn.addEventListener("click", toggleSelectAll);
 
-    // 范围选择按钮
     const rangeSelectBtn = document.createElement("button");
     rangeSelectBtn.id = "torrent-range-select-btn";
     rangeSelectBtn.className = "torrent-range-select";
     rangeSelectBtn.textContent = "范围选择";
     rangeSelectBtn.addEventListener("click", toggleRangeSelect);
 
-    // 下载按钮
     const downloadBtn = document.createElement("button");
     downloadBtn.id = "torrent-download-btn";
     downloadBtn.className = "torrent-download-btn";
     downloadBtn.textContent = "下载";
     downloadBtn.addEventListener("click", startBatchDownload);
 
-    // 将按钮添加到容器中
     container.appendChild(selectAllBtn);
     container.appendChild(rangeSelectBtn);
     container.appendChild(downloadBtn);
 
-    // 将容器添加到页面
     document.body.appendChild(container);
 
-    // 状态显示
     const statusDiv = document.createElement("div");
     statusDiv.id = "torrent-status";
     statusDiv.className = "torrent-status";
     document.body.appendChild(statusDiv);
   }
 
-  // 全选/取消全选
   function toggleSelectAll() {
     const checkboxes = document.querySelectorAll(".torrent-checkbox");
     const allChecked = Array.from(checkboxes).every((cb) => cb.checked);
@@ -353,7 +307,6 @@
     btn.textContent = allChecked ? "全选" : "取消全选";
   }
 
-  // 切换范围选择模式
   function toggleRangeSelect() {
     rangeSelectMode = !rangeSelectMode;
     rangeStart = null;
@@ -368,7 +321,6 @@
         4000,
       );
 
-      // 为所有复选框添加范围选择事件
       const checkboxes = document.querySelectorAll(".torrent-checkbox");
       checkboxes.forEach((cb) => {
         cb.addEventListener("click", handleRangeClick);
@@ -378,7 +330,6 @@
       btn.textContent = "范围选择";
       showNotification("已退出范围选择模式", "info", 2000);
 
-      // 移除范围选择事件
       const checkboxes = document.querySelectorAll(".torrent-checkbox");
       checkboxes.forEach((cb) => {
         cb.removeEventListener("click", handleRangeClick);
@@ -386,7 +337,6 @@
     }
   }
 
-  // 处理范围点击
   function handleRangeClick(event) {
     if (!rangeSelectMode) return;
 
@@ -400,17 +350,14 @@
     const clickedIndex = allCheckboxes.indexOf(checkbox);
 
     if (rangeStart === null) {
-      // 设置起点
       rangeStart = clickedIndex;
       checkbox.checked = true;
       showNotification("起点已设置，请点击终点复选框", "success", 2000);
     } else {
-      // 设置终点并选择范围
       const rangeEnd = clickedIndex;
       const start = Math.min(rangeStart, rangeEnd);
       const end = Math.max(rangeStart, rangeEnd);
 
-      // 使用 setTimeout 确保在事件处理完成后再设置状态
       setTimeout(() => {
         for (let i = start; i <= end; i++) {
           if (allCheckboxes[i]) {
@@ -418,17 +365,14 @@
           }
         }
 
-        // 再次确保起点和终点都被选中
         allCheckboxes[start].checked = true;
         allCheckboxes[end].checked = true;
 
         showNotification(`已选择 ${end - start + 1} 个项目`, "success", 2000);
       }, 0);
 
-      // 重置范围选择
       rangeStart = null;
 
-      // 自动退出范围选择模式
       setTimeout(() => {
         if (rangeSelectMode) {
           toggleRangeSelect();
@@ -437,7 +381,6 @@
     }
   }
 
-  // 获取torrent列表
   async function getTorrentList(torrentPageUrl) {
     return new Promise((resolve, reject) => {
       GM_xmlhttpRequest({
@@ -451,7 +394,6 @@
               "text/html",
             );
 
-            // 查找所有torrent条目（每个form代表一个torrent）
             const torrentForms = doc.querySelectorAll(
               'form[action*="gallerytorrents.php"]',
             );
@@ -461,7 +403,6 @@
               const table = form.querySelector("table");
               if (!table) return;
 
-              // 获取种子信息
               const rows = table.querySelectorAll("tr");
               let posted = "",
                 size = "",
@@ -474,37 +415,31 @@
               rows.forEach((row) => {
                 const cells = row.querySelectorAll("td");
 
-                // 第一行：Posted, Size, Seeds, Peers, Downloads
                 if (cells.length >= 6) {
-                  // Posted
                   const postedText = cells[0].textContent;
                   if (postedText.includes("Posted:")) {
                     const postedMatch = postedText.match(/Posted:\s*(.+)/);
                     if (postedMatch) posted = postedMatch[1].trim();
                   }
 
-                  // Size
                   const sizeText = cells[1].textContent;
                   if (sizeText.includes("Size:")) {
                     const sizeMatch = sizeText.match(/Size:\s*(.+)/);
                     if (sizeMatch) size = sizeMatch[1].trim();
                   }
 
-                  // Seeds
                   const seedsText = cells[3].textContent;
                   if (seedsText.includes("Seeds:")) {
                     const seedsMatch = seedsText.match(/Seeds:\s*(\d+)/);
                     if (seedsMatch) seeds = parseInt(seedsMatch[1]) || 0;
                   }
 
-                  // Peers
                   const peersText = cells[4].textContent;
                   if (peersText.includes("Peers:")) {
                     const peersMatch = peersText.match(/Peers:\s*(\d+)/);
                     if (peersMatch) peers = parseInt(peersMatch[1]) || 0;
                   }
 
-                  // Downloads
                   const downloadsText = cells[5].textContent;
                   if (downloadsText.includes("Downloads:")) {
                     const downloadsMatch =
@@ -514,7 +449,6 @@
                   }
                 }
 
-                // 第二行：Uploader
                 if (cells.length >= 2) {
                   const uploaderText = cells[0].textContent;
                   if (uploaderText.includes("Uploader:")) {
@@ -524,7 +458,6 @@
                   }
                 }
 
-                // 下载链接（可能在任何行）
                 const link = row.querySelector('a[href*=".torrent"]');
                 if (link) {
                   torrentLink = link;
@@ -532,7 +465,6 @@
               });
 
               if (torrentLink) {
-                // 从onclick属性提取真实下载链接
                 let downloadUrl = torrentLink.href;
                 const onclick = torrentLink.getAttribute("onclick");
                 if (onclick) {
@@ -569,27 +501,22 @@
     });
   }
 
-  // 下载torrent文件（使用浏览器原生下载，自动带cookie）
   function downloadTorrent(url, filename) {
     return new Promise((resolve, reject) => {
       try {
-        // 清理文件名中的非法字符
         filename = filename.replace(/[<>:"/\\|?*]/g, "_");
         if (!filename.endsWith(".torrent")) {
           filename += ".torrent";
         }
 
-        // 创建一个隐藏的a标签来触发下载
         const a = document.createElement("a");
         a.href = url;
         a.download = filename;
         a.style.display = "none";
         document.body.appendChild(a);
 
-        // 触发点击
         a.click();
 
-        // 延迟后移除元素
         setTimeout(() => {
           document.body.removeChild(a);
           resolve();
@@ -600,7 +527,6 @@
     });
   }
 
-  // 处理单个gallery的下载
   async function processGallery(galleryUrl, torrentPageUrl, index, total) {
     updateStatus(`[${index}/${total}] 正在处理...`);
 
@@ -612,7 +538,6 @@
         return;
       }
 
-      // 获取torrent列表
       const torrents = await getTorrentList(torrentPageUrl);
 
       if (torrents.length === 0) {
@@ -625,10 +550,8 @@
       let selectedTorrent;
 
       if (torrents.length === 1) {
-        // 只有一个torrent，直接下载
         selectedTorrent = torrents[0];
       } else {
-        // 多个torrent，让用户选择（始终弹窗）
         const options = torrents
           .map((t, idx) => {
             let info = `${idx + 1}. ${t.name}\n`;
@@ -662,7 +585,6 @@
         selectedTorrent = torrents[choiceNum - 1];
       }
 
-      // 下载选中的torrent
       if (selectedTorrent) {
         updateStatus(`[${index}/${total}] 正在下载: ${selectedTorrent.name}`);
         await downloadTorrent(selectedTorrent.url, selectedTorrent.name);
@@ -686,7 +608,6 @@
     }
   }
 
-  // 开始批量下载
   async function startBatchDownload() {
     const checkedBoxes = Array.from(
       document.querySelectorAll(".torrent-checkbox:checked"),
@@ -708,7 +629,6 @@
       return;
     }
 
-    // 禁用下载按钮
     const downloadBtn = document.getElementById("torrent-download-btn");
     downloadBtn.disabled = true;
     downloadBtn.textContent = "下载中...";
@@ -720,13 +640,11 @@
 
       await processGallery(galleryUrl, torrentUrl, i + 1, checkedBoxes.length);
 
-      // 在处理下一个之前延迟
       if (i < checkedBoxes.length - 1) {
         await randomDelay();
       }
     }
 
-    // 恢复下载按钮
     downloadBtn.disabled = false;
     downloadBtn.textContent = "下载";
     hideStatus();
@@ -738,42 +656,34 @@
     }
   }
 
-  // 初始化
   function init() {
-    // 添加控制按钮（立即添加）
     addControlButtons();
 
-    // 延迟添加复选框（处理动态加载的情况）
-    setTimeout(() => {
-      addCheckboxes();
-    }, 1000);
+    addCheckboxes();
 
-    setTimeout(() => {
-      addCheckboxes();
-    }, 3000);
-
-    // 监听DOM变化，处理动态加载的内容
     const observer = new MutationObserver((mutations) => {
-      // 避免频繁触发
-      let shouldUpdate = false;
+      const addedRoots = new Set();
+
       mutations.forEach((mutation) => {
         mutation.addedNodes.forEach((node) => {
-          if (node.nodeType === 1) {
-            // 元素节点
-            if (
-              node.querySelector &&
-              (node.querySelector('a[href*="/g/"]') ||
-                node.matches('a[href*="/g/"]'))
-            ) {
-              shouldUpdate = true;
-            }
+          if (node.nodeType !== 1) {
+            return;
+          }
+
+          if (node.closest(".torrent-item-wrapper")) {
+            return;
+          }
+
+          if (
+            node.matches(galleryLinkSelector) ||
+            node.querySelector(galleryLinkSelector)
+          ) {
+            addedRoots.add(node);
           }
         });
       });
 
-      if (shouldUpdate) {
-        addCheckboxes();
-      }
+      addedRoots.forEach((root) => addCheckboxes(root));
     });
 
     observer.observe(document.body, {
@@ -782,7 +692,6 @@
     });
   }
 
-  // 页面加载完成后初始化
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", init);
   } else {
